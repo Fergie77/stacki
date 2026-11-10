@@ -15,6 +15,40 @@ export interface AuthConfig {
   readonly SESSION_SECRET: string;
   readonly EDITOR_GITHUB_IDS: string;
   readonly STUDIO_ORIGIN: string;
+  // A GitHub App allows only ten callback URLs, so one app shared by many Studios sends every
+  // sign-in to a relay (the hosting app's /studio-auth/callback) that forwards it here. The
+  // state then starts with this Studio's host, which is how the relay knows where to send it.
+  readonly GITHUB_CALLBACK_URL?: string;
+}
+
+/** Where GitHub returns after sign-in: this Studio, or the shared relay when one is set. */
+export function callbackURL(config: Pick<AuthConfig, 'GITHUB_CALLBACK_URL' | 'STUDIO_ORIGIN'>): string {
+  const relay = config.GITHUB_CALLBACK_URL;
+  if (relay === undefined || relay === '') {
+    return `${config.STUDIO_ORIGIN}/studio/auth/callback`;
+  }
+  const url = URL.parse(relay);
+  if (!url || url.protocol !== 'https:' || url.search || url.hash || url.username || url.password) {
+    throw new Error('GITHUB_CALLBACK_URL must be an https URL without a query, fragment or credentials');
+  }
+  return url.href;
+}
+
+/** The OAuth state: random, and prefixed with this Studio's host when a relay must route it. */
+export function loginState(config: Pick<AuthConfig, 'GITHUB_CALLBACK_URL' | 'STUDIO_ORIGIN'>, random: string): string {
+  if (config.GITHUB_CALLBACK_URL === undefined || config.GITHUB_CALLBACK_URL === '') {
+    return random;
+  }
+  const state = `${new URL(config.STUDIO_ORIGIN).host}_${random}`;
+  // The signed state cookie holds at most 100 characters (session.ts).
+  if (state.length > 100) {
+    throw new Error('STUDIO_ORIGIN host is too long for a relayed sign-in state');
+  }
+  return state;
+}
+// Attempts are keyed by the random part alone; a relay's host prefix only routes the callback.
+function loginAttemptKey(state: string): string {
+  return state.slice(state.lastIndexOf('_') + 1);
 }
 export async function githubLogin(
   request: Request,
@@ -100,7 +134,7 @@ async function finishLogin(request: Request, config: AuthConfig, attempts: Login
   if (code.length > 1000) {
     return loginPage('expired', 400);
   }
-  const result = await attempts.run(state.login, state.expires, () => completeLogin(code, config, authorize));
+  const result = await attempts.run(loginAttemptKey(state.login), state.expires, () => completeLogin(code, config, authorize));
   if (result.ok) {
     return result.value;
   }
@@ -203,7 +237,7 @@ async function exchangeCode(code: string, config: AuthConfig) {
       client_id: config.GITHUB_CLIENT_ID,
       client_secret: config.GITHUB_CLIENT_SECRET,
       code,
-      redirect_uri: `${config.STUDIO_ORIGIN}/studio/auth/callback`,
+      redirect_uri: callbackURL(config),
     }),
   });
   if (!tokenResponse.ok) {
@@ -230,11 +264,11 @@ async function exchangeCode(code: string, config: AuthConfig) {
 }
 
 async function beginLogin(config: AuthConfig) {
-  const state = crypto.randomUUID();
+  const state = loginState(config, crypto.randomUUID());
   const signed = await signSession({ id: 1, login: state, expires: Date.now() + loginLifetimeMs, audience: 'login' }, config.SESSION_SECRET);
   const destination = new URL('https://github.com/login/oauth/authorize');
   destination.searchParams.set('client_id', config.GITHUB_CLIENT_ID);
-  destination.searchParams.set('redirect_uri', `${config.STUDIO_ORIGIN}/studio/auth/callback`);
+  destination.searchParams.set('redirect_uri', callbackURL(config));
   destination.searchParams.set('state', state);
   return new Response(null, {
     status: 302,

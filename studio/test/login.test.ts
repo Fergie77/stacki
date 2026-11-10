@@ -3,7 +3,8 @@
 import { waitCookie } from '../src/features/auth/loginCooldown';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { githubLogin as handleLogin, type AuthConfig } from '../src/features/auth/githubLogin';
+import { callbackURL, githubLogin as handleLogin, loginState, type AuthConfig } from '../src/features/auth/githubLogin';
+import { record } from '../src/shared/validation';
 import type { GitHubProfile } from '../src/features/auth/profile';
 import { loginAttemptFixture } from './loginAttemptFixture';
 import { signSession, verifySession } from '../src/features/auth/session';
@@ -219,4 +220,44 @@ test('a callback opened during an existing wait clears its old state without con
   );
   assert.equal(response?.status, 429);
   assert.ok(response?.headers.getSetCookie().some((value) => value.startsWith('__Host-studio-state=;') && value.includes('Max-Age=0')));
+});
+
+test('a shared GitHub App signs in through a relay: GitHub returns to the relay, the state names this Studio', async (t) => {
+  const relayed = { ...config, GITHUB_CALLBACK_URL: 'https://hosting.test/studio-auth/callback' };
+  const begin = await githubLogin(new Request(relayed.STUDIO_ORIGIN + '/studio/auth/login'), relayed, async () => false);
+  const location = new URL(begin?.headers.get('Location') ?? '');
+  assert.equal(location.searchParams.get('redirect_uri'), relayed.GITHUB_CALLBACK_URL);
+  const state = location.searchParams.get('state') ?? '';
+  assert.match(state, /^studio\.test_[0-9a-f-]{36}$/);
+  const exchanges: unknown[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: string, init?: RequestInit) => {
+    if (input.endsWith('/user')) {
+      return Response.json({ id: 123, login: 'editor' });
+    }
+    exchanges.push(JSON.parse(String(init?.body)));
+    return Response.json({ access_token: 'test-token' });
+  });
+  // The relay forwards GitHub's query unchanged to this Studio's own callback.
+  const callbackRequest = new Request(`${relayed.STUDIO_ORIGIN}/studio/auth/callback?code=test-code&state=${state}`, {
+    headers: { Cookie: (begin?.headers.get('Set-Cookie') ?? '').split(';')[0] ?? '' },
+  });
+  const allowed = await githubLogin(callbackRequest, relayed, async () => true);
+  assert.equal(allowed?.status, 302);
+  assert.equal(allowed?.headers.get('Location'), relayed.STUDIO_ORIGIN + '/studio');
+  assert.equal(exchanges.length, 1);
+  assert.equal(record(exchanges[0])['redirect_uri'], relayed.GITHUB_CALLBACK_URL, 'the code is exchanged with the URL GitHub returned to');
+});
+
+test('a relay callback URL must be plain https', async () => {
+  for (const bad of ['http://hosting.test/cb', 'https://hosting.test/cb?x=1', 'https://hosting.test/cb#x', 'https://user:pass@hosting.test/cb', 'not a url']) {
+    const response = githubLogin(new Request(config.STUDIO_ORIGIN + '/studio/auth/login'), { ...config, GITHUB_CALLBACK_URL: bad }, async () => false);
+    await assert.rejects(response, /GITHUB_CALLBACK_URL/, bad);
+  }
+  assert.equal(callbackURL(config), 'https://studio.test/studio/auth/callback', 'without a relay, GitHub returns to the Studio itself');
+  assert.equal(loginState(config, 'abc'), 'abc');
+  assert.throws(
+    () =>
+      loginState({ ...config, STUDIO_ORIGIN: `https://${'a'.repeat(63)}.example.com`, GITHUB_CALLBACK_URL: 'https://hosting.test/cb' }, crypto.randomUUID()),
+    /too long/,
+  );
 });
