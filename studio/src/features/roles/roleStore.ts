@@ -62,7 +62,8 @@ export function panelAllowed(panel: string | undefined): boolean {
   if (panel === 'components' && !allowsStructure(access)) {
     return false;
   }
-  if ((panel === 'code' || panel === 'ai') && !allowsCode(access)) {
+  // Git (history) writes are Full only on the server too (accessRole.ts).
+  if ((panel === 'code' || panel === 'ai' || panel === 'history') && !allowsCode(access)) {
     return false;
   }
   return getEditorRole() !== 'client' || clientPanel(panel);

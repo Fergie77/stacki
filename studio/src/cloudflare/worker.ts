@@ -130,13 +130,24 @@ type Editor = Identity & { readonly role: AccessRole };
 export default {
   async fetch(request: Request, environment: Environment, context: ExecutionContext): Promise<Response> {
     try {
-      return await route(request, environment, context);
+      return noIndex(await route(request, environment, context));
     } catch (error) {
       console.error('Studio request failed', error instanceof Error ? error.message : 'Unknown');
-      return studioError(request, 'Studio is restarting or temporarily unavailable. Please retry shortly.', 503);
+      return noIndex(studioError(request, 'Studio is restarting or temporarily unavailable. Please retry shortly.', 503));
     }
   },
 };
+// The editor and its preview are private working copies, never search results. Crawlers must
+// be allowed to fetch a page to read this, so robots.txt does not disallow anything.
+function noIndex(response: Response): Response {
+  if (response.status === 101) {
+    return response;
+  }
+  const outgoing = new Response(response.body, response);
+  outgoing.headers.set('X-Robots-Tag', 'noindex, nofollow');
+  return outgoing;
+}
+
 async function route(request: Request, environment: Environment, context: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname.startsWith('/studio/internal/')) {
