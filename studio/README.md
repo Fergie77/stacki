@@ -109,7 +109,7 @@ requests. A `wrangler deploy` you run yourself is covered in the
 Studio is distributed as a versioned source bundle alongside Stacki desktop releases.
 It has not been published to npm. See [releases and updates](docs/releases.md) for
 installation, project version pinning, customization replacement, and recovery.
-For Cloudflare, read [the deployment guide](docs/cloudflare.md).
+For Cloudflare, read [the deployment guide](docs/cloudflare.md). To run the editing server on your own machine instead of a paid Container, read [self-hosting](docs/self-hosting.md).
 
 ## Verification
 

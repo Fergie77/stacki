@@ -3,6 +3,7 @@ import { updateRoutes } from './updateRoutes';
 import { isStudioAPI, studioError } from './apiResponse';
 import { canEdit } from '../features/auth/repositoryAccess';
 import { Container } from '@cloudflare/containers';
+import { DurableObject } from 'cloudflare:workers';
 import { githubLogin, loginPage } from '../features/auth/githubLogin';
 import { routeLogin } from '../features/auth/loginRoute';
 import { cookie, sessionCookie, signSession, verifySession, type Identity } from '../features/auth/session';
@@ -12,6 +13,7 @@ import { claimLoginAttempt, LoginAttempts } from '../features/auth/loginAttempts
 import { warmupRequest } from './warmupRequest';
 import { cmsConnectionRoute, cmsVault } from './cmsConnectionRoutes';
 import { CmsUnavailable, cmsForwarded } from '../features/cms/cmsConnectionVault';
+import { parseStudioBackend, type StudioBackend } from './studioBackend';
 
 export class PreviewContainer extends Container<Environment> {
   private readonly loginAttempts = new LoginAttempts((state, expires) => this.ctx.storage.transaction((storage) => claimLoginAttempt(storage, state, expires)));
@@ -66,6 +68,61 @@ export class PreviewContainer extends Container<Environment> {
     PORT: '4350',
   };
 }
+// Sign-in coordination for a self-hosted editing server (studioBackend.ts): the same OAuth
+// state storage as PreviewContainer, without a Container, so it runs on the free plan.
+export class StudioSessions extends DurableObject<Environment> {
+  private readonly loginAttempts = new LoginAttempts((state, expires) => this.ctx.storage.transaction((storage) => claimLoginAttempt(storage, state, expires)));
+  override async fetch(request: Request): Promise<Response> {
+    const auth = await githubLogin(request, this.env, this.loginAttempts, (profile) => canEdit(profile, this.env, true));
+    return auth ?? new Response('Not found', { status: 404 });
+  }
+}
+
+function backend(environment: Environment): StudioBackend {
+  const parsed = parseStudioBackend({
+    studioOrigin: environment.STUDIO_ORIGIN,
+    previewOrigin: environment.PREVIEW_ORIGIN,
+    serverHost: environment.STUDIO_SERVER_HOST,
+    hasContainer: environment.PREVIEW !== undefined,
+    hasSessions: environment.SESSIONS !== undefined,
+  });
+  if (!parsed.ok) {
+    // A deployment mistake, not a request failure: fail loudly in the logs.
+    throw new Error(`Studio backend misconfigured: ${parsed.error}`);
+  }
+  return parsed.backend;
+}
+
+// OAuth requests go to whichever Durable Object keeps sign-in state.
+function loginCoordinator(environment: Environment, chosen: StudioBackend): (request: Request) => Promise<Response> {
+  if (chosen.kind === 'origin') {
+    const sessions = environment.SESSIONS;
+    if (!sessions) {
+      throw new Error('SESSIONS binding missing');
+    }
+    return (request) => sessions.getByName('project').fetch(request);
+  }
+  const preview = environment.PREVIEW;
+  if (!preview) {
+    throw new Error('PREVIEW binding missing');
+  }
+  return (request) => preview.getByName('project').fetch(request);
+}
+
+// Sends an already-authorised request to the editing server.
+function toServer(request: Request, environment: Environment, chosen: StudioBackend): Promise<Response> {
+  if (chosen.kind === 'origin') {
+    // Keeps the URL and Host (Vite only accepts the editor and preview hosts) while
+    // connecting to the tunnel host in the same zone. WebSocket upgrades pass through.
+    return fetch(request, { cf: { resolveOverride: chosen.host } });
+  }
+  const preview = environment.PREVIEW;
+  if (!preview) {
+    throw new Error('PREVIEW binding missing');
+  }
+  return preview.getByName('project').fetch(request);
+}
+
 export default {
   async fetch(request: Request, environment: Environment, context: ExecutionContext): Promise<Response> {
     try {
@@ -89,7 +146,7 @@ async function route(request: Request, environment: Environment, context: Execut
     return previewEntry(url, environment);
   }
   if (!previewHost) {
-    const auth = routeLogin(request, (forwarded) => environment.PREVIEW.getByName('project').fetch(forwarded));
+    const auth = routeLogin(request, loginCoordinator(environment, backend(environment)));
     if (auth) {
       return auth;
     }
@@ -210,7 +267,7 @@ async function proxy(request: Request, environment: Environment, identity: Ident
   headers.set('x-studio-user-id', String(identity.id));
   headers.set('x-studio-session', cookie(request, previewHost ? '__Host-studio-preview' : '__Host-studio'));
   headers.delete('Cookie');
-  const response = await environment.PREVIEW.getByName('project').fetch(new Request(request, { headers }));
+  const response = await toServer(new Request(request, { headers }), environment, backend(environment));
   if (response.status === 101) {
     return response;
   }

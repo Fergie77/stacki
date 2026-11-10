@@ -1,5 +1,5 @@
 import type { AuthConfig } from '../features/auth/githubLogin';
-import type { PreviewContainer } from './worker';
+import type { PreviewContainer, StudioSessions } from './worker';
 
 export interface Environment extends AuthConfig {
   readonly EDITOR_ACCESS?: string;
@@ -12,7 +12,11 @@ export interface Environment extends AuthConfig {
   readonly AI_MODEL?: string;
   readonly AI_MODELS?: string;
   readonly AI_API_KEY?: string;
-  readonly PREVIEW: DurableObjectNamespace<PreviewContainer>;
+  // Exactly one editing-server backend is configured (studioBackend.ts): the PREVIEW
+  // Container, or a self-hosted STUDIO_SERVER_HOST with SESSIONS for sign-in state.
+  readonly PREVIEW?: DurableObjectNamespace<PreviewContainer>;
+  readonly SESSIONS?: DurableObjectNamespace<StudioSessions>;
+  readonly STUDIO_SERVER_HOST?: string;
   readonly DRAFTS: R2Bucket;
   readonly ASSETS: Fetcher;
   readonly PREVIEW_ORIGIN: string;

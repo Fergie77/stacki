@@ -95,6 +95,7 @@
     "scripts",
     "vendor",
     "cloudflare/wrangler.jsonc",
+    "cloudflare/wrangler.homelab.jsonc",
     "Dockerfile",
     ".dockerignore",
     "tsconfig.json",

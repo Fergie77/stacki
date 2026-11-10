@@ -66,7 +66,7 @@ editor assets still need to fit that limit.
 
 ## Requirements
 
-Use a Cloudflare account with Workers Paid and Containers enabled, Docker, a GitHub repository containing the Astro site, and a GitHub App installed on that repository. The site must have `package-lock.json` and a working `npm run build` script. Each developer deploys these resources into their own account.
+Use a Cloudflare account with Workers Paid and Containers enabled (or run the editing server yourself on the free plan: see [self-hosting](self-hosting.md)), Docker, a GitHub repository containing the Astro site, and a GitHub App installed on that repository. The site must have `package-lock.json` and a working `npm run build` script. Each developer deploys these resources into their own account.
 
 See Cloudflare's [Containers setup guide](https://developers.cloudflare.com/containers/get-started/) and [Container class reference](https://developers.cloudflare.com/containers/api/container-class/). Pricing and available instance types should be checked in the account before deployment.
 

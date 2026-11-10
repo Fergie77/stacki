@@ -1,0 +1,36 @@
+// Studio with a self-hosted editing server (docs/self-hosting.md): the Worker handles sign-in,
+// sessions and draft storage on Cloudflare's free plan and forwards editing traffic to the
+// Docker image on your own machine through a Cloudflare Tunnel. No Containers, so no Workers Paid.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "stacki-studio",
+  "main": "../src/cloudflare/worker.ts",
+  "compatibility_date": "2026-10-16",
+  "compatibility_flags": ["nodejs_compat"],
+  // resolveOverride (studioBackend.ts) only works on zone routes, not workers.dev.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "edit.example.com/*", "zone_name": "example.com" },
+    { "pattern": "preview-edit.example.com/*", "zone_name": "example.com" },
+  ],
+  // Keep diagnostic logging opt-in to avoid unexpected Observability charges.
+  "observability": { "enabled": false },
+  "assets": { "directory": "../dist", "binding": "ASSETS", "run_worker_first": true },
+  "durable_objects": { "bindings": [{ "name": "SESSIONS", "class_name": "StudioSessions" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["StudioSessions"] }],
+  "r2_buckets": [{ "binding": "DRAFTS", "bucket_name": "stacki-studio-drafts" }],
+  "vars": {
+    "STUDIO_ORIGIN": "https://edit.example.com",
+    "PREVIEW_ORIGIN": "https://preview-edit.example.com",
+    // The Tunnel's hostname, in the same zone as the routes above.
+    "STUDIO_SERVER_HOST": "studio-origin.example.com",
+    "GITHUB_REPOSITORY": "owner/project",
+    "GITHUB_BRANCH": "main",
+    "GITHUB_APP_ID": "",
+    "GITHUB_INSTALLATION_ID": "",
+    "GITHUB_CLIENT_ID": "",
+    "EDITOR_ACCESS": "repository",
+    "EDITOR_GITHUB_IDS": "",
+  },
+}
