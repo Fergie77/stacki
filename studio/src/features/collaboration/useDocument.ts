@@ -5,7 +5,8 @@ import { watchConnection } from './connectionWatch';
 import { SaveWatch } from './saveWatch';
 import { parseSaveSequence } from './saveProtocol';
 import { receiveSharedPublish } from '../publishing/sharedPublish';
-import { getEditorRole, subscribeRole } from '../roles/roleStore';
+import { getAccessRole, getEditorRole, subscribeRole } from '../roles/roleStore';
+import { allowsStructure } from '../roles/accessRole';
 import { assertClientAction, assertClientSourceChange } from '../roles/clientPolicy';
 import { occurrenceOf, parsePeer, type Peer } from './presence';
 import { selectionOwner, selectionLockedMessage } from './selectionLock';
@@ -392,6 +393,10 @@ export class SharedDocument {
   }
   /** Sends a structural action; false when it was not sent (nothing to edit). */
   async action(action: TreeAction): Promise<boolean> {
+    // The editing server refuses these too (rooms.ts); saying so here avoids a round trip.
+    if (!allowsStructure(getAccessRole())) {
+      throw new Error('Content access changes text, images and links. Ask for Layout access to add, move or remove elements.');
+    }
     if (getEditorRole() === 'client') {
       if (!this.file.startsWith('src/pages/')) {
         throw new Error('Component source is protected in Client mode.');

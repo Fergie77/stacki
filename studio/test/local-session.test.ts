@@ -10,11 +10,22 @@ test('local editing mode is validated with a legacy draft default', () => {
     editing: 'source',
   });
   assert.deepEqual(parseSession({ kind: 'local' }), { kind: 'local', editing: 'draft' });
+  // A Worker from before editing roles sends no access: full, as then.
   assert.deepEqual(parseSession({ kind: 'github', id: 123, login: 'editor' }), {
     kind: 'github',
     id: 123,
     login: 'editor',
+    access: 'full',
   });
+  assert.deepEqual(parseSession({ kind: 'github', id: 123, login: 'editor', access: 'layout' }), {
+    kind: 'github',
+    id: 123,
+    login: 'editor',
+    access: 'layout',
+  });
+  // An unknown role gets the least access, never more.
+  const unknown = parseSession({ kind: 'github', id: 123, login: 'editor', access: 'owner' });
+  assert.equal(unknown.kind === 'github' ? unknown.access : undefined, 'content');
   for (const value of [
     undefined,
     { kind: 'unknown' },

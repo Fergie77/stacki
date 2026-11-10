@@ -1,4 +1,5 @@
-import { setEditorRole } from './roleStore';
+import { getAccessRole, setEditorRole } from './roleStore';
+import { ACCESS_ROLE_LABEL } from './accessRole';
 import { useEditorRole } from './useEditorRole';
 import './roles.css';
 
@@ -12,6 +13,18 @@ const roleIcons = {
 
 export function RoleMenu({ saved, close }: { readonly saved: boolean; readonly close: () => void }) {
   const role = useEditorRole();
+  const access = getAccessRole();
+  // A granted role is not a preference: only full access may preview the Client editor.
+  if (access !== 'full') {
+    return (
+      <div className="role-menu" role="group" aria-label="Editing role">
+        <div className="role-menu-heading">Your access</div>
+        <div className="role-menu-option" aria-disabled="true">
+          <strong>{ACCESS_ROLE_LABEL[access]}</strong>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="role-menu" role="group" aria-label="Editing role">
       <div className="role-menu-heading">Editing role</div>

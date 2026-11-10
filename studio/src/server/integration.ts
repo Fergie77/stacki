@@ -27,6 +27,7 @@ import { filePath, sourcePath, string, record, MAX_SOURCE } from '../shared/vali
 import { featureRoutes } from './featureRoutes';
 import { saveAsset } from '../features/storage/assetStorage';
 import { interceptBrowserReloads } from '../features/preview/browserReloads';
+import { allowsRequest, parseAccessRole, type AccessRole } from '../features/roles/accessRole';
 
 interface Options {
   readonly root: string;
@@ -125,6 +126,16 @@ function authorized(request: IncomingMessage, options: Options) {
   const origin = request.headers.origin;
   return !origin || origin === `http://${host}`;
 }
+// The Worker sets x-studio-role on every request it forwards (worker.ts, proxy), so the browser
+// cannot choose it. Without the container token this is local loopback editing: no roles.
+// A missing header means a Worker from before roles (full, as then); an unknown one gets the least.
+function requestRole(request: IncomingMessage): AccessRole {
+  if (!process.env['STUDIO_CONTAINER_TOKEN']) {
+    return 'full';
+  }
+  const header = request.headers['x-studio-role'];
+  return header === undefined ? 'full' : (parseAccessRole(header) ?? 'content');
+}
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -135,6 +146,10 @@ async function handleRequest(
 ) {
   if (!authorized(request, options)) {
     json(response, 403, { error: 'Unauthorized studio request' });
+    return;
+  }
+  if (!allowsRequest(requestRole(request), request.method ?? 'GET', new URL(request.url ?? '/', 'http://studio').pathname)) {
+    json(response, 403, { error: 'Your editing access does not include this. Ask for more access to change it.' });
     return;
   }
   const work = () => handleRequestInWorkspace(request, response, options, features, rooms, catalogs);
@@ -295,6 +310,7 @@ function configureStudioServer(
               : undefined,
             reauthorizeConnection(request),
             url.searchParams.get('participant') ?? undefined,
+            requestRole(request),
           ),
         );
       })

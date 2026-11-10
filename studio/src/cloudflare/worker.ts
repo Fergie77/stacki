@@ -1,7 +1,8 @@
 import { PublishIdleGuard } from './publishIdleGuard';
 import { updateRoutes } from './updateRoutes';
 import { isStudioAPI, studioError } from './apiResponse';
-import { canEdit } from '../features/auth/repositoryAccess';
+import { accessRole, canEdit } from '../features/auth/repositoryAccess';
+import type { AccessRole } from '../features/roles/accessRole';
 import { Container } from '@cloudflare/containers';
 import { DurableObject } from 'cloudflare:workers';
 import { githubLogin, loginPage } from '../features/auth/githubLogin';
@@ -123,6 +124,9 @@ function toServer(request: Request, environment: Environment, chosen: StudioBack
   return preview.getByName('project').fetch(request);
 }
 
+// A signed-in person and the role they edit with (accessRole, roles/accessRole.ts).
+type Editor = Identity & { readonly role: AccessRole };
+
 export default {
   async fetch(request: Request, environment: Environment, context: ExecutionContext): Promise<Response> {
     try {
@@ -181,12 +185,12 @@ async function route(request: Request, environment: Environment, context: Execut
 }
 
 // The Studio host's requests the Worker answers itself, without the container.
-async function workerRoute(request: Request, url: URL, environment: Environment, identity: Identity): Promise<Response | undefined> {
+async function workerRoute(request: Request, url: URL, environment: Environment, identity: Editor): Promise<Response | undefined> {
   if (url.pathname === '/studio/api/updates') {
     return authorizedUpdate(request, environment, identity);
   }
   if (url.pathname === '/studio/api/session') {
-    return Response.json({ kind: 'github', id: identity.id, login: identity.login }, { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json({ kind: 'github', id: identity.id, login: identity.login, access: identity.role }, { headers: { 'Cache-Control': 'no-store' } });
   }
   if (url.pathname === '/studio/api/preview-url') {
     return previewURL(url, environment, identity);
@@ -197,7 +201,7 @@ async function workerRoute(request: Request, url: URL, environment: Environment,
 
 // To the container: never with a client's CMS target, and with ours for a CMS
 // call (cmsConnectionRoutes.ts). A connection that cannot be used is answered here.
-async function forward(request: Request, url: URL, environment: Environment, identity: Identity, previewHost: boolean): Promise<Response> {
+async function forward(request: Request, url: URL, environment: Environment, identity: Editor, previewHost: boolean): Promise<Response> {
   let forwarded: Request;
   try {
     forwarded = await cmsForwarded(request, url, cmsVault(environment));
@@ -210,7 +214,7 @@ async function forward(request: Request, url: URL, environment: Environment, ide
   return proxy(forwarded, environment, identity, previewHost);
 }
 
-function warmPreview(request: Request, environment: Environment, identity: Identity, context: ExecutionContext) {
+function warmPreview(request: Request, environment: Environment, identity: Editor, context: ExecutionContext) {
   const warmup = warmupRequest(request, environment.PREVIEW_ORIGIN);
   if (!warmup) {
     return;
@@ -223,7 +227,7 @@ function warmPreview(request: Request, environment: Environment, identity: Ident
   );
 }
 
-async function studioIdentity(request: Request, environment: Environment, previewHost: boolean): Promise<Identity | Response> {
+async function studioIdentity(request: Request, environment: Environment, previewHost: boolean): Promise<Editor | Response> {
   const identity = await verifySession(
     cookie(request, previewHost ? '__Host-studio-preview' : '__Host-studio'),
     environment.SESSION_SECRET,
@@ -232,10 +236,11 @@ async function studioIdentity(request: Request, environment: Environment, previe
   if (!identity) {
     return isStudioAPI(request) || previewHost ? studioError(request, 'Your Studio session expired. Sign in again.', 401) : loginPage();
   }
-  if (!(await canEdit(identity, environment))) {
+  const role = await accessRole(identity, environment);
+  if (!role) {
     return isStudioAPI(request) || previewHost ? studioError(request, 'Repository editing access is required.', 403) : loginPage('access', 403);
   }
-  return identity;
+  return { ...identity, role };
 }
 
 async function previewEntry(url: URL, environment: Environment): Promise<Response> {
@@ -260,11 +265,13 @@ async function previewEntry(url: URL, environment: Environment): Promise<Respons
   });
 }
 
-async function proxy(request: Request, environment: Environment, identity: Identity, previewHost: boolean): Promise<Response> {
+async function proxy(request: Request, environment: Environment, identity: Editor, previewHost: boolean): Promise<Response> {
   const headers = new Headers(request.headers);
   headers.set('x-studio-token', environment.CONTAINER_TOKEN);
   headers.set('x-studio-user', identity.login);
   headers.set('x-studio-user-id', String(identity.id));
+  // Always set here, never passed through from the browser: the server enforces it.
+  headers.set('x-studio-role', identity.role);
   headers.set('x-studio-session', cookie(request, previewHost ? '__Host-studio-preview' : '__Host-studio'));
   headers.delete('Cookie');
   const response = await toServer(new Request(request, { headers }), environment, backend(environment));

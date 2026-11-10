@@ -1,7 +1,7 @@
 import { isMobileEditor } from './mobileEditor';
 import type { CmsSelection } from '../features/cms/CmsWorkspace';
 import { useEditorRole } from '../features/roles/useEditorRole';
-import { clientPanel } from '../features/roles/roleStore';
+import { panelAllowed } from '../features/roles/roleStore';
 import { useEffect, useRef, useState } from 'react';
 import { onAssetRequest, type AssetRequest } from '../../vendor/stacki/src/ui/assetPick';
 import type { PreviewDevice } from '../../vendor/stacki/src/features/preview/PreviewToolbar';
@@ -47,7 +47,7 @@ export function useEditorView() {
     role,
     device,
     setDevice,
-    panel: role === 'client' && !clientPanel(panel) ? ('navigator' as const) : panel,
+    panel: panelAllowed(panel) ? panel : ('navigator' as const),
     setPanel,
     tab: role === 'client' ? ('settings' as const) : tab,
     setTab,

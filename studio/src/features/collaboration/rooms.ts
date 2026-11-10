@@ -26,6 +26,8 @@ import { BatchedWriter } from '../storage/batchedWriter';
 import { DraftStorage } from '../storage/draftStorage';
 import { SerialQueue } from '../../shared/serialQueue';
 import { readSource, preparePath } from '../project/projectServer';
+import type { AccessRole } from '../roles/accessRole';
+import { assertRoleAction, assertRoleSourceChange } from '../roles/clientPolicy';
 
 interface LivePresence {
   readonly written?: (file: string, mode: SourceRenderMode) => void;
@@ -45,6 +47,8 @@ export class Room {
   readonly document = new Y.Doc();
   readonly text = this.document.getText('source');
   readonly clients = new Map<WebSocket, Peer>();
+  // Each connection's editing role (accessRole.ts), kept out of the presence peers share.
+  private readonly roles = new Map<WebSocket, AccessRole>();
   readonly cursors: CursorRelay;
   private readonly colors: PresenceColors;
   private queue = Promise.resolve();
@@ -95,7 +99,7 @@ export class Room {
     // restart can seed identical text with new IDs and duplicate it on reconnection.
     await this.persist();
   }
-  attach(socket: WebSocket, identity?: GitHubProfile, authorize?: () => Promise<boolean>, participant?: string) {
+  attach(socket: WebSocket, identity?: GitHubProfile, authorize?: () => Promise<boolean>, participant?: string, role: AccessRole = 'full') {
     if (this.clients.size >= 30) {
       socket.close(1013, 'Room is full');
       return;
@@ -113,6 +117,7 @@ export class Room {
       updatedAt: Date.now(),
       ...(identity ? { githubId: identity.id } : {}),
     });
+    this.roles.set(socket, role);
     maintainConnection(socket, identity ? (authorize ?? (async () => false)) : undefined);
     this.synchronize(socket);
     this.presence();
@@ -157,6 +162,7 @@ export class Room {
     if (!this.clients.has(socket)) {
       return;
     }
+    this.roles.delete(socket);
     this.cursors.remove(socket);
     this.colors.release(key);
     this.clients.delete(socket);
@@ -242,6 +248,7 @@ export class Room {
       throw new Error('Another edit arrived. Please repeat the drag or action.');
     }
     const action = parseAction(message['action']);
+    assertRoleAction(this.roles.get(socket) ?? 'content', this.text.toString(), action);
     const client = this.clients.get(socket);
     const owner = selectionOwner(this.clients.values(), client?.id ?? '', this.file, 'node' in action ? action.node : '');
     if (owner) {
@@ -388,6 +395,8 @@ export class Room {
       if (owner && probe.getText('source').toString() !== this.text.toString()) {
         throw new Error(selectionLockedMessage(owner));
       }
+      // The browser checks the same rules (useDocument.ts); this holds when it is bypassed.
+      assertRoleSourceChange(this.roles.get(socket) ?? 'content', this.file, this.text.toString(), probe.getText('source').toString());
       if (probe.getMap('metadata').get('epoch') !== this.document.getMap('metadata').get('epoch')) {
         throw new Error('Invalid document identity');
       }

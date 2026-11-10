@@ -1,5 +1,6 @@
 import { bounds, flatten, nodesOf, type TreeAction } from '../source/source';
 import { frontmatterRange } from '../source/frontmatter';
+import { allowsStructure, editorRoleFor, type AccessRole } from './accessRole';
 
 export function clientLayout(source: string) {
   const layout = nodesOf(source).find((node) => node.id === 'layout' && node.kind === 'component');
@@ -42,5 +43,21 @@ export function assertClientSourceChange(file: string, before: string, after: st
     before.slice(left.end) !== after.slice(right.end)
   ) {
     throw new Error('Client mode cannot change the page layout or elements outside it.');
+  }
+}
+
+/** The editing server's check for a structural action from a person with this role. */
+export function assertRoleAction(role: AccessRole, source: string, action: TreeAction) {
+  if (!allowsStructure(role)) {
+    throw new Error('Content access changes text, images and links. Ask for Layout access to add, move or remove elements.');
+  }
+  if (editorRoleFor(role) === 'client') {
+    assertClientAction(source, action);
+  }
+}
+/** The editing server's check for a text change from a person with this role. */
+export function assertRoleSourceChange(role: AccessRole, file: string, before: string, after: string) {
+  if (before !== after && editorRoleFor(role) === 'client') {
+    assertClientSourceChange(file, before, after);
   }
 }

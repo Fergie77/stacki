@@ -3,6 +3,9 @@ import type { PreviewContainer, StudioSessions } from './worker';
 
 export interface Environment extends AuthConfig {
   readonly EDITOR_ACCESS?: string;
+  // EDITOR_ACCESS=hosting: where roles come from (features/auth/hostingAccess.ts).
+  readonly HOSTING_ROLE_URL?: string;
+  readonly HOSTING_KEY?: string;
   readonly SITE_DEPLOYMENT_URL?: string;
   readonly GITHUB_DEPLOY_WORKER?: string;
   readonly GITHUB_DEPLOY_ACCOUNT?: string;

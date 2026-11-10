@@ -12,6 +12,8 @@ import PageSwitcher from '../../../vendor/stacki/src/features/pages/PageSwitcher
 import { useComponentBack } from './useComponentBack';
 import { TemplateEntryPicker } from '../pages/TemplateEntryPicker';
 import { useEditorRole } from '../roles/useEditorRole';
+import { getAccessRole } from '../roles/roleStore';
+import { ACCESS_ROLE_LABEL } from '../roles/accessRole';
 import { projectPages } from './pageLabels';
 import { PreviewButton, type InteractivePreviewState } from '../preview/InteractivePreview';
 interface HeaderProps {
@@ -64,7 +66,7 @@ export function EditorHeader({
         <span className="save-state" role="status" data-saved={document?.status === 'Saved' ? '' : undefined}>
           {document?.status ?? 'Connecting'}
         </span>
-        {role === 'client' && <span className="client-role-badge">Client</span>}
+        {role === 'client' && <span className="client-role-badge">{getAccessRole() === 'full' ? 'Client' : ACCESS_ROLE_LABEL[getAccessRole()]}</span>}
         {componentOpen && switcher}
       </div>
       <div className="studio-titlebar-center">

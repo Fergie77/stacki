@@ -1,8 +1,10 @@
 import { GitHubRepository, type GitHubConfig } from '../github/github';
+import type { AccessRole } from '../roles/accessRole';
+import { hostingRole, type HostingAccessConfig } from './hostingAccess';
 import { record } from '../../shared/validation';
 import type { Identity } from './session';
 
-export interface AccessConfig {
+export interface AccessConfig extends HostingAccessConfig {
   readonly EDITOR_ACCESS?: string;
   readonly EDITOR_GITHUB_IDS: string;
   readonly GITHUB_APP_ID: string;
@@ -16,13 +18,19 @@ export function hasWritePermission(value: unknown, id: number): boolean {
   const user = record(data['user']);
   return user['id'] === id && ['write', 'admin'].includes(String(data['permission']));
 }
-export function createAccessCheck(lookup: (config: GitHubConfig, login: string) => Promise<unknown>, now = Date.now) {
+type RoleCheck = (identity: Pick<Identity, 'id'>, config: AccessConfig, fresh: boolean) => Promise<AccessRole | null>;
+
+export function createAccessCheck(lookup: (config: GitHubConfig, login: string) => Promise<unknown>, now = Date.now, roles: RoleCheck = hostingRole) {
   const cache = new Map<string, { allowed: boolean; until: number }>();
   return async (identity: Pick<Identity, 'id' | 'login'>, config: AccessConfig, fresh = false) => {
     // Callers must verify GitHub OAuth or the signed session before checking access.
     // Do not cache this grant: switching back must recheck repository membership.
     if (config.EDITOR_ACCESS === 'github') {
       return true;
+    }
+    // The hosting service caches its own answers (hostingAccess.ts).
+    if (config.EDITOR_ACCESS === 'hosting') {
+      return (await roles(identity, config, fresh)) !== null;
     }
     if (config.EDITOR_ACCESS !== 'repository') {
       return config.EDITOR_GITHUB_IDS.split(',').some((id) => id.trim() === String(identity.id));
@@ -70,3 +78,14 @@ export const canEdit = createAccessCheck(async (config, login) => {
   const data: unknown = await response.json();
   return data;
 });
+
+/**
+ * The role a person edits with. Hosting access asks the hosting service; every other access
+ * mode is Studio's behaviour without roles, so a person who may edit has full access.
+ */
+export async function accessRole(identity: Pick<Identity, 'id' | 'login'>, config: AccessConfig, fresh = false): Promise<AccessRole | null> {
+  if (config.EDITOR_ACCESS === 'hosting') {
+    return hostingRole(identity, config, fresh);
+  }
+  return (await canEdit(identity, config, fresh)) ? 'full' : null;
+}

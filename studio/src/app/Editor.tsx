@@ -1,4 +1,5 @@
 import { dockedWidthPx, isMobileEditor, useEditorLayout, useEditorLayoutSync, useMobileEditor } from './mobileEditor';
+import { codeAllowed } from '../features/roles/roleStore';
 import { CanvasContextMenu } from '../features/navigator/CanvasContextMenu';
 import { pathFor } from '../features/project/previewSelection';
 import { isCanvasPage } from '../../vendor/stacki/shared/properties/defaultsCanvas';
@@ -86,7 +87,7 @@ export function Editor(props: EditorProps) {
     return <PausedEditor resume={session.resume} />;
   }
   return (
-    <CodeAccess.Provider value={props.view.role !== 'client'}>
+    <CodeAccess.Provider value={props.view.role !== 'client' && codeAllowed()}>
       <div className="app studio-app" data-editor-layout={layout} onKeyDown={interactivePreview.active ? (event) => event.stopPropagation() : undefined}>
         <EditorHeader
           closeDefaults={() => void defaultsCanvas.run('done')}
@@ -243,7 +244,7 @@ function EditorContent({
       />
       <CmsWorkspace props={props} document={model.document} />
       {props.view.role !== 'client' && <VariablesWorkspace props={props} document={model.document} />}
-      {props.view.role !== 'client' && <CodePopup editor={model.codeWindow} />}
+      {props.view.role !== 'client' && codeAllowed() && <CodePopup editor={model.codeWindow} />}
       <QuickInsert
         key={props.file}
         model={model}

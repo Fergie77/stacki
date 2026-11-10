@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { clientPanel } from '../features/roles/roleStore';
+import { panelAllowed } from '../features/roles/roleStore';
 import { useEditorRole } from '../features/roles/useEditorRole';
 import { PropertiesIcon } from '../../vendor/stacki/src/features/componentProperties/PropertiesIcon';
 import {
@@ -32,7 +32,8 @@ interface Props {
 }
 
 export function EditorRail({ panel, toggle, componentOpen }: Props) {
-  const role = useEditorRole();
+  // Re-render when the editing mode changes; panelAllowed reads it (roleStore.ts).
+  useEditorRole();
   const [tip, setTip] = useState<{ label: string; left: number; top: number }>();
   const timer = useRef<ReturnType<typeof setTimeout>>();
   const hide = () => {
@@ -48,7 +49,7 @@ export function EditorRail({ panel, toggle, componentOpen }: Props) {
   return (
     <nav className="rail studio-rail" aria-label="Editor panels">
       {panels
-        .filter(({ id }) => (id !== 'properties' || componentOpen) && (role !== 'client' || clientPanel(id)))
+        .filter(({ id }) => (id !== 'properties' || componentOpen) && panelAllowed(id))
         .map(({ id, label, shortcut, Icon }) => (
           <button
             key={id}
@@ -76,7 +77,7 @@ export function EditorRail({ panel, toggle, componentOpen }: Props) {
           </button>
         ))}
       <div className="rail-spacer" />
-      {role !== 'client' && (
+      {panelAllowed('ai') && (
         <button
           className={`rail-btn ai-icon ${panel === 'ai' ? 'on' : ''}`}
           aria-label="AI chat"
@@ -143,7 +144,7 @@ function useRailKeys({ panel, toggle, componentOpen }: Props) {
           }
         }
       }
-      if (next && (role !== 'client' || clientPanel(next))) {
+      if (next && panelAllowed(next)) {
         event.preventDefault();
         toggle(panel === next ? undefined : next);
       }

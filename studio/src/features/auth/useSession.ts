@@ -2,8 +2,11 @@ import { useEffect, useState } from 'react';
 import { request } from '../project/projectClient';
 import { record } from '../../shared/validation';
 import { parseProfile, type GitHubProfile } from './profile';
+import { parseAccessRole, type AccessRole } from '../roles/accessRole';
+import { setAccessRole } from '../roles/roleStore';
 
-export type Session = { readonly kind: 'local'; readonly editing: 'source' | 'draft' } | (GitHubProfile & { readonly kind: 'github' });
+export type Session =
+  { readonly kind: 'local'; readonly editing: 'source' | 'draft' } | (GitHubProfile & { readonly kind: 'github'; readonly access: AccessRole });
 
 export function parseSession(value: unknown): Session {
   const data = record(value);
@@ -17,7 +20,9 @@ export function parseSession(value: unknown): Session {
   if (data['kind'] !== 'github') {
     throw new Error('Invalid Studio session');
   }
-  return { kind: 'github', ...parseProfile(data) };
+  // A Worker from before roles sends no access: full, as then. An unknown role gets the least.
+  const access = data['access'] === undefined ? 'full' : (parseAccessRole(data['access']) ?? 'content');
+  return { kind: 'github', ...parseProfile(data), access };
 }
 
 export function useSession(report: (error: unknown) => void) {
@@ -29,7 +34,11 @@ export function useSession(report: (error: unknown) => void) {
         if (!active) {
           return;
         }
-        setSession(parseSession(value));
+        const parsed = parseSession(value);
+        if (parsed.kind === 'github') {
+          setAccessRole(parsed.access);
+        }
+        setSession(parsed);
       })
       .catch((error: unknown) => {
         if (active) {
