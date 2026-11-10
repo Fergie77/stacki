@@ -27,7 +27,7 @@ import { DraftStorage } from '../storage/draftStorage';
 import { SerialQueue } from '../../shared/serialQueue';
 import { readSource, preparePath } from '../project/projectServer';
 import type { AccessRole } from '../roles/accessRole';
-import { assertRoleAction, assertRoleSourceChange } from '../roles/clientPolicy';
+import { assertRoleAction, assertRoleSourceChange } from '../roles/rolePolicy';
 
 interface LivePresence {
   readonly written?: (file: string, mode: SourceRenderMode) => void;

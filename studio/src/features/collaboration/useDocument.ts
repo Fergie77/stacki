@@ -7,7 +7,8 @@ import { parseSaveSequence } from './saveProtocol';
 import { receiveSharedPublish } from '../publishing/sharedPublish';
 import { getAccessRole, getEditorRole, subscribeRole } from '../roles/roleStore';
 import { allowsStructure } from '../roles/accessRole';
-import { assertClientAction, assertClientSourceChange } from '../roles/clientPolicy';
+import { assertClientAction } from '../roles/clientPolicy';
+import { assertRoleSourceChange } from '../roles/rolePolicy';
 import { occurrenceOf, parsePeer, type Peer } from './presence';
 import { selectionOwner, selectionLockedMessage } from './selectionLock';
 import { CursorChannel, participantId } from './cursorChannel';
@@ -380,10 +381,11 @@ export class SharedDocument {
     if (!this.ready || !this.canEdit(this.selection)) {
       return;
     }
-    if (getEditorRole() === 'client') {
-      const source = this.text.toString();
-      assertClientSourceChange(this.file, source, source.slice(0, edit.start) + edit.text + source.slice(edit.end));
-    }
+    // The editing server makes the same check (rolePolicy.ts); making it here explains a refusal at once.
+    // Full access previewing Client mode is held to Layout's rules, as before.
+    const role = getAccessRole() === 'full' && getEditorRole() === 'client' ? 'layout' : getAccessRole();
+    const source = this.text.toString();
+    assertRoleSourceChange(role, this.file, source, source.slice(0, edit.start) + edit.text + source.slice(edit.end));
     const previous = this.text.toString().slice(edit.start, edit.end);
     const minimal = textChange(previous, edit.text);
     this.doc.transact(() => {

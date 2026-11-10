@@ -1,7 +1,9 @@
 // Goal: editing roles from a hosting service are parsed strictly, cached briefly, and enforced
-// by the editing server however the browser behaves.
-// Method: check the role rules directly, drive the hosting lookup with a fake service, and send
-// actions and text updates to a real collaboration room as Content, Layout and Full editors.
+// by the editing server however the browser behaves. Content may change only words, links and
+// images; Layout and Content may not touch code (other files, frontmatter beyond imports).
+// Method: check the role rules directly, drive the hosting lookup with a fake service, edit the
+// homepage fixture into each allowed and each refused shape, and send actions and text updates
+// to a real collaboration room as Content, Layout and Full editors.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -16,6 +18,7 @@ import { createAccessCheck, type AccessConfig } from '../src/features/auth/repos
 import { Room, checksum } from '../src/features/collaboration/rooms';
 import { flatten, nodesOf } from '../src/features/source/source';
 import { record } from '../src/shared/validation';
+import { assertRoleSourceChange } from '../src/features/roles/rolePolicy';
 
 const hosting = { HOSTING_ROLE_URL: 'https://hosting.example.com/api/studio/role', HOSTING_KEY: 'k'.repeat(40) };
 
@@ -198,6 +201,99 @@ test('the editing server refuses structure from Content and anything outside the
     assert.match((await send(layout, { type: 'update', epoch, save: 2, update })) ?? '', /layout/);
     assert.equal(await send(full, { type: 'update', epoch, save: 3, update }), undefined, 'Full access may rewrite the page');
     assert.equal(state.room.text.toString(), '<h1>Replaced</h1>');
+  } finally {
+    await state.close();
+  }
+});
+
+const fixture = await readFile(new URL('./fixtures/homepage.astro', import.meta.url), 'utf8');
+const page = 'src/pages/index.astro';
+const headingText = '>Style Guide</Heading';
+const withImport = (source: string, line: string) => source.replace('---\n', `---\n${line}\n`);
+
+test('Content may change words, rich text, links, alt text and images', () => {
+  const allowed: Record<string, string> = {
+    'heading text': fixture.replace(headingText, '>Welcome</Heading'),
+    'bold and a link': fixture.replace(headingText, '><strong>Style</strong> <a href="/about" target="_blank">Guide</a><br /></Heading'),
+    'alt text added': fixture.replace('loading="eager"', 'loading="eager" alt="A soft glow"'),
+    'image from public': fixture.replace('<Icon src={logo_icon}', '<Icon src="/images/logo.png"'),
+    'new imported image': withImport(fixture, 'import studioAsset from "../assets/new.webp";').replace('src={lumos_background}', 'src={studioAsset}'),
+    'a comment label': fixture.replace('<Eyebrow', '<!-- Version tag -->\n      <Eyebrow'),
+  };
+  for (const [name, after] of Object.entries(allowed)) {
+    assert.doesNotThrow(() => assertRoleSourceChange('content', page, fixture, after), name);
+  }
+  assert.doesNotThrow(() => assertRoleSourceChange('content', 'src/content/blog/post.md', '# Hi', '# Hello'), 'Markdown is prose');
+});
+
+test('Content may not change structure, styles, settings, code or other files', () => {
+  const refused: Record<string, [string, RegExp]> = {
+    'a duplicated element': [
+      fixture.replace('<Eyebrow variant="tag">v1.0.0</Eyebrow>', '<Eyebrow variant="tag">v1.0.0</Eyebrow><Eyebrow variant="tag">v2</Eyebrow>'),
+      /Layout access/,
+    ],
+    'a removed element': [fixture.replace('<Eyebrow variant="tag">v1.0.0</Eyebrow>', ''), /Layout access/],
+    'a variant': [fixture.replace('variant="display"', 'variant="small"'), /"variant"/],
+    'a class': [fixture.replace('class="margin-block-8"', 'class="margin-block-2"'), /"class"/],
+    'a slot': [fixture.replace('slot="column2"', 'slot="column1"'), /"slot"/],
+    'a style attribute added': [fixture.replace('<Eyebrow variant="tag"', '<Eyebrow style="color:red" variant="tag"'), /"style"/],
+    'a block inside rich text': [fixture.replace(headingText, '><div>Style Guide</div></Heading'), /text inside this element/],
+    'an expression in text': [fixture.replace(headingText, '>{fetch("https://evil.example")}</Heading'), /text inside this element/],
+    'an event handler on a link': [fixture.replace(headingText, '><a href="/" onclick="steal()">Style Guide</a></Heading'), /"onclick"/],
+    'a script link': [fixture.replace(headingText, '><a href=" JavaScript:alert(1)">Style Guide</a></Heading'), /"href"/],
+    'an image prop set to code': [fixture.replace('src={lumos_background}', 'src={Heading}'), /"src"/],
+    'an image prop set to an expression': [fixture.replace('src={lumos_background}', 'src={(() => lumos_background)()}'), /"src"/],
+    'code in the frontmatter': [withImport(fixture, 'await fetch("https://evil.example");'), /imports/],
+    'a component import': [withImport(fixture, 'import Card from "@/components/item/Card.astro";'), /imports/],
+    'the layout props': [fixture.replace('theme="dark"', 'theme="light"'), /"theme"/],
+  };
+  for (const [name, [after, message]] of Object.entries(refused)) {
+    assert.throws(() => assertRoleSourceChange('content', page, fixture, after), message, name);
+  }
+  for (const file of ['src/lib/site.ts', 'astro.config.mjs', 'src/styles/global.css', 'src/content/blog/post.mdx', 'src/data/menu.json']) {
+    assert.throws(() => assertRoleSourceChange('content', file, 'a', 'b'), /pages and Markdown/, file);
+  }
+  assert.throws(
+    () => assertRoleSourceChange('content', 'src/components/Hero.astro', fixture, fixture.replace(headingText, '>Hi</Heading')),
+    /Component source/,
+  );
+});
+
+test('Layout may add component imports but no other code, and edits no files beyond pages and Markdown', () => {
+  assert.doesNotThrow(() => assertRoleSourceChange('layout', page, fixture, withImport(fixture, 'import Card from "@/components/item/Card.astro";')));
+  assert.doesNotThrow(
+    () => assertRoleSourceChange('layout', page, fixture, fixture.replace('variant="display"', 'variant="small"')),
+    'Layout keeps its settings',
+  );
+  assert.throws(() => assertRoleSourceChange('layout', page, fixture, withImport(fixture, 'import "../lib/run.ts";')), /imports/);
+  assert.throws(() => assertRoleSourceChange('layout', page, fixture, withImport(fixture, 'import data from "../data.svg?raw";')), /imports/);
+  assert.throws(() => assertRoleSourceChange('layout', 'astro.config.mjs', 'a', 'b'), /pages and Markdown/);
+  assert.doesNotThrow(() => assertRoleSourceChange('design', 'astro.config.mjs', 'a', 'b'), 'Design is not held to Client mode');
+});
+
+test('the editing server holds a Content editor to words over raw text updates', async () => {
+  const state = await roomFor(['content']);
+  const [content] = state.clients;
+  assert.ok(content);
+  try {
+    const epoch = state.room.document.getMap('metadata').get('epoch');
+    const rewrite = (from: string, to: string) => {
+      const probe = new Y.Doc();
+      Y.applyUpdate(probe, Y.encodeStateAsUpdate(state.room.document));
+      const vector = Y.encodeStateVector(probe);
+      const text = probe.getText('source');
+      const at = text.toString().indexOf(from);
+      assert.ok(at >= 0, `fixture contains ${from}`);
+      text.delete(at, from.length);
+      text.insert(at, to);
+      const update = Buffer.from(Y.encodeStateAsUpdate(probe, vector)).toString('base64');
+      probe.destroy();
+      return update;
+    };
+    assert.match((await send(content, { type: 'update', epoch, save: 1, update: rewrite('variant="display"', 'variant="small"') })) ?? '', /"variant"/);
+    assert.equal(await send(content, { type: 'update', epoch, save: 2, update: rewrite('Style Guide', 'Welcome') }), undefined);
+    assert.match(state.room.text.toString(), />Welcome</);
+    assert.match(state.room.text.toString(), /variant="display"/);
   } finally {
     await state.close();
   }
