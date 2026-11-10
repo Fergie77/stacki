@@ -55,9 +55,22 @@ export function usePreviewLoading(url: string | undefined, container: React.RefO
   };
 }
 
+// The hosted Studio loads its preview through the Worker's sign-in hand-off
+// (`/__studio-entry?token=…&page=/about`), which redirects to the page itself
+// (worker.ts, previewEntry). The ready message names that page, so the hand-off
+// URL must answer for the page in its `page` parameter; compared as written, no
+// hosted preview ever became ready.
+const PREVIEW_ENTRY_PATH = '/__studio-entry';
+
 /** The page a URL names: its path and query, without the editor's fragment. */
-export function pagePath(url: string): string {
-  const parsed = new URL(url, location.href);
+export function pagePath(url: string, base: string = location.href): string {
+  const parsed = new URL(url, base);
+  const page = parsed.pathname === PREVIEW_ENTRY_PATH ? parsed.searchParams.get('page') : null;
+  // Only a same-origin path can be a page; anything else is taken as written.
+  if (page !== null && page.startsWith('/') && !page.startsWith('//')) {
+    const target = new URL(page, parsed.origin);
+    return target.pathname + target.search;
+  }
   return parsed.pathname + parsed.search;
 }
 
